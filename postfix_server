@@ -1,0 +1,140 @@
+[출처 : http://www.atblog.co.kr/?p=4877]
+1. 관리자 접속 
+우선 작업하기 쉽게 관리자로 접속을 하자.
+$ su
+ 
+
+2. postfix 설치
+작업을 시작해보자면 기본적으로 우분투 대부분엔 Postfix가 설치되어 있는데
+본인이 설치를 하지 않았다면 수동으로 설치해야 한다.
+
+$ apt-get install postfix
+ 
+2. postfix 설정
+다음은 Postfix을 설정 할 것이다. 따라가기
+
+$ dpkg-reconfigure postfix
+
+# 인터넷 사이트
+# 서버는 도메인으로
+# Postfix Configuration : server.com mail.server.com localhost.server.com localhost
+# 동기 업데이트 설정은 원하는 값으로
+# 나머지 그냥 엔터 연타
+ 
+3. 세부 설정
+여기까지 끝났으면 이제 세부적인 설정이 들어가야한다.
+
+# 메일 폴더 설정
+$ postconf -e 'home_mailbox = Maildir/'
+ 
+# procmail 미사용 설정
+$ postconf -e "mailbox_command = "
+ 
+# SASL을 이용해 SMTP 인증을 사용하기 위하여 설정할 것들
+$ postconf -e 'smtpd_sasl_local_domain ='
+ 
+$ postconf -e 'smtpd_sasl_auth_enable = yes'
+ 
+$ postconf -e 'smtpd_sasl_security_options = noanonymous'
+ 
+$ postconf -e 'broken_sasl_auth_clients = yes'
+ 
+$ postconf -e 'smtpd_recipient_restrictions = permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination'
+ 
+$ postconf -e 'inet_interfaces = all'
+ 
+
+만약 자신이 인증서를 가지고 있다면 그대로 쓰고, 없다면 덤프로 생성한다.
+
+$ openssl genrsa -des3 -rand /etc/hosts -out smtpd.key 1024
+ 
+$ chmod 600 smtpd.key
+ 
+$ openssl req -new -key smtpd.key -out smtpd.csr
+ 
+$ openssl x509 -req -days 3650 -in smtpd.csr -signkey smtpd.key -out smtpd.crt
+ 
+$ openssl rsa -in smtpd.key -out smtpd.key.unencrypted
+ 
+$ mv -f smtpd.key.unencrypted smtpd.key
+ 
+$ openssl req -new -x509 -extensions v3_ca -keyout cakey.pem -out cacert.pem -days 3650
+ 
+$ mv smtpd.key /etc/ssl/private/
+ 
+$ mv smtpd.crt /etc/ssl/certs/
+ 
+$ mv cakey.pem /etc/ssl/private/
+ 
+$ mv cacert.pem /etc/ssl/certs/
+ 
+
+인증서 생성이 되었으면 관련 TLS인크립션 사용을 위해 설정을 해주어야 한다.
+하단의 빨간글씨는 알아서 수정해라.
+
+$ postconf -e 'smtpd_tls_auth_only = no'
+ 
+$ postconf -e 'smtp_use_tls = yes'
+ 
+$ postconf -e 'smtpd_use_tls = yes'
+ 
+$ postconf -e 'smtp_tls_note_starttls_offer = yes'
+ 
+#하단 경로는 자신에게 맞춰 수정
+$ postconf -e 'smtpd_tls_key_file = /etc/ssl/private/smtpd.key'
+ 
+$ postconf -e 'smtpd_tls_cert_file = /etc/ssl/certs/smtpd.crt'
+ 
+$ postconf -e 'smtpd_tls_CAfile = /etc/ssl/certs/cacert.pem'
+ 
+$ postconf -e 'smtpd_tls_loglevel = 1'
+ 
+$ postconf -e 'smtpd_tls_received_header = yes'
+ 
+$ postconf -e 'smtpd_tls_session_cache_timeout = 3600s'
+ 
+$ postconf -e 'tls_random_source = dev:/dev/urandom'
+ 
+#이 아래 주소는 알아서 수정
+$ postconf -e 'myhostname = server1.example.com'
+ 
+
+smtp인증에 관한 설정
+
+$ nano /etc/postfix/sasl/smtpd.conf
+ 
+pwcheck_method: saslauthd
+ 
+mech_list: plain login
+ 
+
+이제 데몬을 재시작 할 것이다.
+
+$ service postfix reload
+ 
+
+여기까지 작업이 끝났으면 기본적인 Postfix 설정은 완료되었다 볼 수 있다.
+그럼 다음 작업으로 sasl2를 설치 할 것이다. 인증 절차를 위한 모듈로 그냥 따라와라.
+
+$ apt-get install libsasl2-2 libsasl2-modules sasl2-bin
+ 
+
+saslauthd를 수정 할 것이다.
+
+$ nano /etc/default/saslauthd
+ 
+# START를 yes로 수정하고 PWDIR, PARAMS, PIDFILE를 추가
+START=yes
+PWDIR="/var/spool/postfix/var/run/saslauthd"
+PARAMS="-m ${PWDIR}"
+PIDFILE="${PWDIR}/saslauthd.pid"
+ 
+# OPTION 수정
+OPTIONS="-c -m /var/spool/postfix/var/run/saslauthd"
+ 
+
+/var/spool/postfix/var/run/saslauthd 업데이트 그리고 실행
+
+$ dpkg-statoverride --force --update --add root sasl 755 /var/spool/postfix/var/run/saslauthd
+ 
+$ service saslauthd start
